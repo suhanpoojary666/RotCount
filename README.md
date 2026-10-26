@@ -1,6 +1,6 @@
 # RotCount v1.0.0
 
-A minimal, offline Android application that counts Instagram Reels you scroll each day, featuring a live Dynamic Island–styled floating counter pill and Apple HIG–inspired Day and Week activity stats.
+A minimal, offline Android application that counts Instagram Reels you scroll each day, featuring a live Dynamic Island–styled floating counter pill.
 
 ---
 
@@ -52,7 +52,6 @@ RotCount is built with zero-telemetry local privacy:
 ## Release Verification & Integrity
 
 - **APK Filename**: `rotcount-v1.0.0.apk`
-- **Package Name**: `com.suhan.reelcounter`
 - **Version Name**: `1.0.0`
 - **Version Code**: `1`
 - **APK Size**: ~1.1 MB (optimized & minified release build)
