@@ -65,10 +65,6 @@ class ReelAccessibilityService : AccessibilityService() {
     private val lastPackagePositions = mutableMapOf<String, Int>()
     private var isAwaitingInitialPosition = false
 
-    // Gate A negative cache (150ms)
-    private var lastNegativeGateCheckTimeMs = 0L
-    private var lastNegativeGateClassName: String? = null
-
     // BroadcastReceiver for Screen Off and User Present
     private val screenReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
@@ -472,12 +468,6 @@ class ReelAccessibilityService : AccessibilityService() {
             )
         }
 
-        // Gate A (cheapest first): class name check without binder call
-        val now = System.currentTimeMillis()
-        if (lastNegativeGateClassName == className && (now - lastNegativeGateCheckTimeMs) < 150) {
-            return
-        }
-
         val sourceNode = event.source ?: return
 
         val viewId = sourceNode.viewIdResourceName ?: ""
@@ -511,8 +501,6 @@ class ReelAccessibilityService : AccessibilityService() {
         val isPositiveReelMatch = matchesViewId || isReelPagerClass
 
         if (!isPositiveReelMatch) {
-            lastNegativeGateClassName = className
-            lastNegativeGateCheckTimeMs = now
             if (BuildConfig.DEBUG) {
                 Log.d("rotcount_gate", "Rejected scroll: not a reel view (class=$className, viewId=$viewId)")
             }

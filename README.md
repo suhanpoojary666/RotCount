@@ -6,12 +6,12 @@ A minimal, offline Android application that counts how many Instagram Reels you 
 
 ## What It Does
 
-- **Instagram Reels Only**: Accurately counts full-screen vertical Instagram Reels scrolls.
+- **Instagram Reels Only**: Counts full-screen Instagram Reels.
 - **Home Feed Ignored**: Standard Home feed posts and Stories are completely ignored and never counted.
 - **No Overcounting on Re-watch**: Scrolling back to previous reels and scrolling forward through already-seen reels does not increment the count.
 - **Fast Fling Support**: Rapid swipes that jump across reels count as +1 when you settle on a reel, not +N.
 - **Direct Message & Comment Protection**: Chat scrolls and comment sheets are automatically detected and blocked.
-- **Midnight Rollover**: Automatically resets daily counts at midnight and syncs seamlessly across time zones.
+- **Midnight Rollover**: Automatically resets daily counts at midnight and starts a new day at local midnight.
 
 > **Note**: YouTube Shorts support is not included in this release.
 
@@ -62,7 +62,7 @@ RotCount is built with zero-telemetry local privacy:
 
 ### APK SHA-256 Checksum
 ```
-8ef5fb39955d166e19ad92878f9ec135693ae4c926d50f38e30b2d3f22bb4d97
+94520e800af8fa4fb1415685b1d0f60d33139abf5fc70869d1359ed3d063d57d
 ```
 
 ### Signing Certificate Fingerprints
