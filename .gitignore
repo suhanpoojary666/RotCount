@@ -1,0 +1,22 @@
+# Keystores & Signing
+*.jks
+*.keystore
+keystore.properties
+
+# Build artifacts
+*.apk
+*.aab
+build/
+app/build/
+
+# Gradle & IDE
+.gradle/
+.idea/
+local.properties
+*.iml
+
+# OS & Log files
+.DS_Store
+Thumbs.db
+*.log
+
