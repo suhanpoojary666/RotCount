@@ -1,6 +1,6 @@
 # RotCount v1.0.0
 
-A minimal, offline Android application that counts how many Instagram Reels you scroll each day, featuring a live Dynamic Island–styled floating counter pill and Apple HIG–inspired Day and Week activity stats.
+A minimal, offline Android application that counts Instagram Reels you scroll each day, featuring a live Dynamic Island–styled floating counter pill and Apple HIG–inspired Day and Week activity stats.
 
 ---
 
@@ -13,22 +13,19 @@ A minimal, offline Android application that counts how many Instagram Reels you 
 - **Direct Message & Comment Protection**: Chat scrolls and comment sheets are automatically detected and blocked.
 - **Midnight Rollover**: Automatically resets daily counts at midnight and starts a new day at local midnight.
 
-> **Note**: YouTube Shorts support is not included in this release.
-
 ---
 
 ## Installation & Setup
 
-1. **Uninstall Previous Debug Builds**: If you previously installed an early debug build of rotcount, uninstall it first to avoid certificate mismatch errors.
-2. **Install APK**: Download `rotcount-v1.0.0.apk` and tap to install. When prompted by Android, tap **Settings** and allow **Install unknown apps** for your browser or file manager.
-3. **Android 13+ Restricted Settings**: On Android 13 and newer, sideloaded apps require explicit authorization before accessibility services can be activated:
+1. **Install APK**: Download `rotcount-v1.0.0.apk` and tap to install. When prompted by Android, tap **Settings** and allow **Install unknown apps** for your browser or file manager.
+2. **Android 13+ Restricted Settings**: On Android 13 and newer, sideloaded apps require explicit authorization before accessibility services can be activated:
    - Go to device **Settings > Apps > RotCount**.
    - Tap the **three dots (⋮)** in the top right corner.
    - Tap **Allow restricted settings** and confirm with your device PIN or fingerprint.
-4. **Enable Accessibility Service**:
+3. **Enable Accessibility Service**:
    - Open **RotCount** and tap **Open Settings** (or go to **Settings > Accessibility > Installed apps > RotCount**).
    - Turn the toggle **ON** and confirm.
-5. **Battery Optimization**:
+4. **Battery Optimization**:
    - In **Settings > Apps > RotCount > Battery**, set usage to **Unrestricted** so Android does not kill the overlay service in the background.
 
 ---
