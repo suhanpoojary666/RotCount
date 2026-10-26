@@ -1,8 +1,13 @@
 package com.suhan.reelcounter.data
 
+import android.util.Log
+import com.suhan.reelcounter.BuildConfig
 import com.suhan.reelcounter.logic.StatsMath
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -10,13 +15,20 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import java.time.Clock
 import java.time.LocalDate
 import java.time.ZonedDateTime
 import java.util.concurrent.ConcurrentHashMap
 
-class CountStore(private val dao: HourlyCountDao) {
+class CountStore(
+    private val dao: HourlyCountDao,
+    private val clock: Clock = Clock.systemDefaultZone()
+) {
 
-    private val scope = CoroutineScope(Dispatchers.IO)
+    private val ioErrors = CoroutineExceptionHandler { _, t ->
+        if (BuildConfig.DEBUG) Log.w("rotcount", "background persist failed", t)
+    }
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO + ioErrors)
     private val saveMutex = Mutex()
 
     // Thread-safe map of (date, hour) -> pending count
@@ -26,7 +38,7 @@ class CountStore(private val dao: HourlyCountDao) {
     val todayCount: StateFlow<Int> = _todayCount.asStateFlow()
 
     @Volatile
-    private var lastObservedDateStr: String = LocalDate.now().toString()
+    private var lastObservedDateStr: String = LocalDate.now(clock).toString()
 
     init {
         scope.launch {
@@ -35,13 +47,12 @@ class CountStore(private val dao: HourlyCountDao) {
     }
 
     /**
-     * Compares lastObservedDateStr with LocalDate.now(); if different, updates it,
-     * saves pending counts, and refreshes todayCount.
+     * Checks if a new day has arrived and resets today's count if needed.
      */
-    fun ensureToday() {
-        val todayStr = LocalDate.now().toString()
-        if (todayStr != lastObservedDateStr) {
-            lastObservedDateStr = todayStr
+    fun ensureCurrentDay() {
+        val today = LocalDate.now(clock).toString()
+        if (today != lastObservedDateStr) {
+            lastObservedDateStr = today
             _todayCount.value = 0
             scope.launch {
                 savePendingCounts()
@@ -56,14 +67,14 @@ class CountStore(private val dao: HourlyCountDao) {
     fun recordCount(amount: Int) {
         if (amount <= 0) return
 
-        ensureToday()
+        ensureCurrentDay()
 
-        val now = ZonedDateTime.now()
+        val now = ZonedDateTime.now(clock)
         val (dateStr, hour) = StatsMath.getDateAndHour(now)
 
         pendingCounts.compute(Pair(dateStr, hour)) { _, current -> (current ?: 0) + amount }
 
-        if (dateStr == LocalDate.now().toString()) {
+        if (dateStr == LocalDate.now(clock).toString()) {
             _todayCount.update { it + amount }
         }
     }
@@ -79,10 +90,17 @@ class CountStore(private val dao: HourlyCountDao) {
             val key = entry.key
             val count = entry.value
             if (count > 0) {
-                dao.upsertAdd(key.first, key.second, count)
-                pendingCounts.compute(key) { _, current ->
-                    val rem = (current ?: 0) - count
-                    if (rem <= 0) null else rem
+                try {
+                    dao.upsertAdd(key.first, key.second, count)
+                    pendingCounts.compute(key) { _, current ->
+                        val rem = (current ?: 0) - count
+                        if (rem <= 0) null else rem
+                    }
+                } catch (ce: CancellationException) {
+                    throw ce
+                } catch (e: Exception) {
+                    if (BuildConfig.DEBUG) Log.w("rotcount", "Failed to save pending count for $key", e)
+                    // Keep in pendingCounts to retry next flush!
                 }
             }
         }
@@ -92,7 +110,7 @@ class CountStore(private val dao: HourlyCountDao) {
      * Refreshes today's count from Room + pending.
      */
     suspend fun refreshTodayFromDb() = saveMutex.withLock {
-        val todayStr = LocalDate.now().toString()
+        val todayStr = LocalDate.now(clock).toString()
         val dbTotal = dao.getDayTotal(todayStr) ?: 0
         var pendingToday = 0
         for ((key, count) in pendingCounts) {

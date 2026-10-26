@@ -5,8 +5,6 @@ import androidx.room.Database
 import androidx.room.Room
 import androidx.room.RoomDatabase
 
-// CRITICAL: Never bump the database version without adding an explicit Migration.
-// Version 2 is the baseline schema. Destructive migration is only permitted from Version 1.
 @Database(entities = [HourlyCountEntity::class], version = 2, exportSchema = true)
 abstract class ReelDatabase : RoomDatabase() {
 

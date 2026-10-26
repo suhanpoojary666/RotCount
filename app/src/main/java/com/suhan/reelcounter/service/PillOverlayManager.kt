@@ -16,8 +16,11 @@ import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.provider.Settings
+import android.util.Log
 import android.util.TypedValue
+import com.suhan.reelcounter.BuildConfig
 import android.view.Gravity
+import android.view.MotionEvent
 import android.view.View
 import android.view.WindowInsets
 import android.view.WindowManager
@@ -35,6 +38,11 @@ class PillOverlayManager(private val context: Context) {
     private var isAttached = false
     private var isHiding = false
     private var removeRunnable: Runnable? = null
+
+    // Saved position across show/hide cycles
+    private var savedX: Int? = null
+    private var savedY: Int? = null
+    private var magneticAnimator: ValueAnimator? = null
 
     private fun dpToPx(dp: Float): Float {
         return TypedValue.applyDimension(
@@ -68,6 +76,30 @@ class PillOverlayManager(private val context: Context) {
         return statusBarHeight + dpToPx(6f).toInt()
     }
 
+    private fun getBottomInset(): Int {
+        var navBarHeight = 0
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            try {
+                val wm = context.getSystemService(Context.WINDOW_SERVICE) as WindowManager
+                val windowMetrics = wm.currentWindowMetrics
+                val insets = windowMetrics.windowInsets.getInsetsIgnoringVisibility(
+                    WindowInsets.Type.navigationBars()
+                )
+                navBarHeight = insets.bottom
+            } catch (ignored: Exception) {}
+        }
+        if (navBarHeight <= 0) {
+            val resourceId = context.resources.getIdentifier("navigation_bar_height", "dimen", "android")
+            if (resourceId > 0) {
+                navBarHeight = context.resources.getDimensionPixelSize(resourceId)
+            }
+        }
+        if (navBarHeight <= 0) {
+            navBarHeight = dpToPx(24f).toInt()
+        }
+        return navBarHeight + dpToPx(12f).toInt()
+    }
+
     fun showPill(initialCount: Int) {
         val count = initialCount.coerceIn(0, 99999)
 
@@ -88,18 +120,44 @@ class PillOverlayManager(private val context: Context) {
             }
 
             val windowHeight = dpToPx(36f).toInt()
+            val metrics = context.resources.displayMetrics
+            val defaultWidth = dpToPx(88f).toInt()
+            val initialX = savedX ?: ((metrics.widthPixels - defaultWidth) / 2)
+            val initialY = savedY ?: getTopInset()
 
             val params = WindowManager.LayoutParams().apply {
                 width = WindowManager.LayoutParams.WRAP_CONTENT
                 height = windowHeight
                 type = WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY
                 flags = WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
-                        WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE or
                         WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
                         WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS
                 format = PixelFormat.TRANSLUCENT
-                gravity = Gravity.TOP or Gravity.CENTER_HORIZONTAL
-                y = getTopInset()
+                gravity = Gravity.TOP or Gravity.START
+                x = initialX
+                y = initialY
+            }
+
+            setupDragAndSnap(pillView!!, params)
+
+            // Keep right-snapped pill aligned when number of digits widens pill
+            pillView?.addOnLayoutChangeListener { _, left, top, right, bottom, oldLeft, oldTop, oldRight, oldBottom ->
+                val newW = right - left
+                val oldW = oldRight - oldLeft
+                if (oldW > 0 && newW != oldW && isAttached && pillView != null) {
+                    val p = pillView?.layoutParams as? WindowManager.LayoutParams ?: return@addOnLayoutChangeListener
+                    val m = context.resources.displayMetrics
+                    val minX = dpToPx(12f).toInt()
+                    val oldMaxX = (m.widthPixels - oldW - dpToPx(12f).toInt()).coerceAtLeast(minX)
+                    val newMaxX = (m.widthPixels - newW - dpToPx(12f).toInt()).coerceAtLeast(minX)
+                    if (Math.abs(p.x - oldMaxX) < dpToPx(24f).toInt()) {
+                        p.x = newMaxX
+                        savedX = newMaxX
+                        try {
+                            windowManager.updateViewLayout(pillView, p)
+                        } catch (ignored: Exception) {}
+                    }
+                }
             }
 
             try {
@@ -107,13 +165,132 @@ class PillOverlayManager(private val context: Context) {
                 isAttached = true
                 pillView?.animateShow()
             } catch (e: Exception) {
-                e.printStackTrace()
+                if (BuildConfig.DEBUG) Log.w("rotcount", "addView failed", e)
                 isAttached = false
                 pillView = null
             }
         } else {
             pillView?.cancelHideAnimation()
             pillView?.setCount(count, animate = true)
+        }
+    }
+
+    @SuppressLint("ClickableViewAccessibility")
+    private fun setupDragAndSnap(view: PillView, params: WindowManager.LayoutParams) {
+        var startParamsX = 0
+        var startParamsY = 0
+        var touchStartX = 0f
+        var touchStartY = 0f
+        var isDragging = false
+
+        view.setOnTouchListener { _, event ->
+            when (event.action) {
+                MotionEvent.ACTION_DOWN -> {
+                    magneticAnimator?.cancel()
+                    startParamsX = params.x
+                    startParamsY = params.y
+                    touchStartX = event.rawX
+                    touchStartY = event.rawY
+                    isDragging = false
+                    true
+                }
+                MotionEvent.ACTION_MOVE -> {
+                    val dx = event.rawX - touchStartX
+                    val dy = event.rawY - touchStartY
+                    if (!isDragging && (Math.abs(dx) > dpToPx(4f) || Math.abs(dy) > dpToPx(4f))) {
+                        isDragging = true
+                    }
+                    if (isDragging) {
+                        val metrics = context.resources.displayMetrics
+                        val pillW = view.width.takeIf { it > 0 } ?: dpToPx(88f).toInt()
+                        val pillH = view.height.takeIf { it > 0 } ?: dpToPx(36f).toInt()
+
+                        val minX = dpToPx(12f).toInt()
+                        val maxX = (metrics.widthPixels - pillW - dpToPx(12f).toInt()).coerceAtLeast(minX)
+                        val minY = getTopInset()
+                        val maxY = (metrics.heightPixels - pillH - getBottomInset()).coerceAtLeast(minY)
+
+                        params.x = (startParamsX + dx).toInt().coerceIn(minX, maxX)
+                        params.y = (startParamsY + dy).toInt().coerceIn(minY, maxY)
+
+                        try {
+                            windowManager.updateViewLayout(view, params)
+                        } catch (ignored: Exception) {}
+                    }
+                    true
+                }
+                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                    if (isDragging) {
+                        val metrics = context.resources.displayMetrics
+                        val pillW = view.width.takeIf { it > 0 } ?: dpToPx(88f).toInt()
+                        val pillH = view.height.takeIf { it > 0 } ?: dpToPx(36f).toInt()
+
+                        val minX = dpToPx(12f).toInt()
+                        val maxX = (metrics.widthPixels - pillW - dpToPx(12f).toInt()).coerceAtLeast(minX)
+                        val minY = getTopInset()
+                        val maxY = (metrics.heightPixels - pillH - getBottomInset()).coerceAtLeast(minY)
+
+                        val curX = params.x.coerceIn(minX, maxX)
+                        val curY = params.y.coerceIn(minY, maxY)
+
+                        // Magnetic snap to the nearest of all 4 borders
+                        val distLeft = Math.abs(curX - minX)
+                        val distRight = Math.abs(maxX - curX)
+                        val distTop = Math.abs(curY - minY)
+                        val distBottom = Math.abs(maxY - curY)
+
+                        val minDist = minOf(distLeft, distRight, distTop, distBottom)
+
+                        val targetX: Int
+                        val targetY: Int
+
+                        when (minDist) {
+                            distLeft -> {
+                                targetX = minX
+                                targetY = curY.coerceIn(minY, maxY)
+                            }
+                            distRight -> {
+                                targetX = maxX
+                                targetY = curY.coerceIn(minY, maxY)
+                            }
+                            distTop -> {
+                                targetX = curX.coerceIn(minX, maxX)
+                                targetY = minY
+                            }
+                            else -> {
+                                targetX = curX.coerceIn(minX, maxX)
+                                targetY = maxY
+                            }
+                        }
+
+                        magneticAnimator?.cancel()
+                        val animStartX = curX
+                        val animStartY = curY
+                        magneticAnimator = ValueAnimator.ofFloat(0f, 1f).apply {
+                            duration = 260
+                            interpolator = OvershootInterpolator(1.1f)
+                            addUpdateListener { anim ->
+                                val frac = anim.animatedValue as Float
+                                params.x = (animStartX + (targetX - animStartX) * frac).toInt()
+                                params.y = (animStartY + (targetY - animStartY) * frac).toInt()
+                                try {
+                                    windowManager.updateViewLayout(view, params)
+                                } catch (ignored: Exception) {}
+                            }
+                            addListener(object : AnimatorListenerAdapter() {
+                                override fun onAnimationEnd(animation: Animator) {
+                                    savedX = targetX
+                                    savedY = targetY
+                                }
+                            })
+                            start()
+                        }
+                    }
+                    isDragging = false
+                    true
+                }
+                else -> false
+            }
         }
     }
 
@@ -159,11 +336,47 @@ class PillOverlayManager(private val context: Context) {
     fun onConfigurationChanged(newConfig: Configuration) {
         if (isAttached && pillView != null) {
             try {
-                val params = pillView?.layoutParams as? WindowManager.LayoutParams
-                if (params != null) {
-                    params.y = getTopInset()
-                    windowManager.updateViewLayout(pillView, params)
+                val params = pillView?.layoutParams as? WindowManager.LayoutParams ?: return
+                val metrics = context.resources.displayMetrics
+                val pillW = pillView?.width.takeIf { it != null && it > 0 } ?: dpToPx(88f).toInt()
+                val pillH = pillView?.height.takeIf { it != null && it > 0 } ?: dpToPx(36f).toInt()
+                val minX = dpToPx(12f).toInt()
+                val maxX = (metrics.widthPixels - pillW - dpToPx(12f).toInt()).coerceAtLeast(minX)
+                val minY = getTopInset()
+                val maxY = (metrics.heightPixels - pillH - getBottomInset()).coerceAtLeast(minY)
+
+                val curX = params.x.coerceIn(minX, maxX)
+                val curY = params.y.coerceIn(minY, maxY)
+
+                // Re-snap to closest border in new orientation
+                val distLeft = Math.abs(curX - minX)
+                val distRight = Math.abs(maxX - curX)
+                val distTop = Math.abs(curY - minY)
+                val distBottom = Math.abs(maxY - curY)
+
+                val minDist = minOf(distLeft, distRight, distTop, distBottom)
+
+                when (minDist) {
+                    distLeft -> {
+                        params.x = minX
+                        params.y = curY
+                    }
+                    distRight -> {
+                        params.x = maxX
+                        params.y = curY
+                    }
+                    distTop -> {
+                        params.x = curX
+                        params.y = minY
+                    }
+                    else -> {
+                        params.x = curX
+                        params.y = maxY
+                    }
                 }
+                savedX = params.x
+                savedY = params.y
+                windowManager.updateViewLayout(pillView, params)
             } catch (ignored: Exception) {}
         }
     }

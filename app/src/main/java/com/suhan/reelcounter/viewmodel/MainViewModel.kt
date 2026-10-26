@@ -4,9 +4,11 @@ import android.accessibilityservice.AccessibilityServiceInfo
 import android.content.Context
 import android.content.Intent
 import android.provider.Settings
+import android.util.Log
 import android.view.accessibility.AccessibilityManager
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.suhan.reelcounter.BuildConfig
 import com.suhan.reelcounter.data.CountStore
 import com.suhan.reelcounter.data.ReelPreferences
 import com.suhan.reelcounter.logic.StatsMath
@@ -144,7 +146,7 @@ class MainViewModel(
             }
             context.startActivity(intent)
         } catch (e: Exception) {
-            e.printStackTrace()
+            if (BuildConfig.DEBUG) Log.w("rotcount", "Failed to open accessibility settings", e)
         }
     }
 

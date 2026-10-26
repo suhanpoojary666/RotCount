@@ -1,22 +1,44 @@
-# Keystores & Signing
-*.jks
-*.keystore
-keystore.properties
-
-# Build artifacts
+# Built application & package files
 *.apk
 *.aab
+*.aar
+*.ap_
+*.dex
+
+# Java & Kotlin compilation outputs
+*.class
+bin/
+gen/
+out/
 build/
 app/build/
-
-# Gradle & IDE
 .gradle/
-.idea/
-local.properties
-*.iml
+.kotlin/
+.gradletasknamecache
 
-# OS & Log files
+# Local & secret properties (Never commit!)
+local.properties
+keystore.properties
+
+# Signing Keystores (Never commit!)
+*.jks
+*.keystore
+
+# Android Studio & IDE
+*.iml
+.idea/
+.idea_modules/
+.navigation/
+captures/
+.externalNativeBuild
+.cxx
+
+# OS artifacts
 .DS_Store
 Thumbs.db
-*.log
+ehthumbs.db
 
+# Log files & error dumps
+*.log
+hs_err_pid*
+replay_pid*

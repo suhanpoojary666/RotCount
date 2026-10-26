@@ -10,10 +10,14 @@ object ReelApps {
     val INSTAGRAM = ReelAppSignature(
         packageName = "com.instagram.android",
         pagerClassNames = setOf(
+            "androidx.viewpager2.widget.ViewPager2",
             "com.instagram.common.ui.widget.reboundviewpager.ReboundViewPager",
-            "ReboundViewPager"
+            "androidx.recyclerview.widget.RecyclerView",
+            "ViewPager2",
+            "RecyclerView",
+            "ViewPager"
         ),
-        viewIdKeywords = listOf("clips", "reel")
+        viewIdKeywords = listOf("clips", "reel", "video", "feed")
     )
 
     val YOUTUBE = ReelAppSignature(

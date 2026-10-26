@@ -21,6 +21,7 @@ import com.suhan.reelcounter.ReelCounterApplication
 import com.suhan.reelcounter.data.CountStore
 import com.suhan.reelcounter.data.ReelPreferences
 import com.suhan.reelcounter.logic.ReelProgress
+import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -30,7 +31,10 @@ import kotlinx.coroutines.launch
 
 class ReelAccessibilityService : AccessibilityService() {
 
-    private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
+    private val serviceExceptionHandler = CoroutineExceptionHandler { _, t ->
+        if (BuildConfig.DEBUG) Log.w("rotcount", "Service scope error", t)
+    }
+    private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Main + serviceExceptionHandler)
     private val mainHandler = Handler(Looper.getMainLooper())
 
     private lateinit var countStore: CountStore
@@ -56,10 +60,12 @@ class ReelAccessibilityService : AccessibilityService() {
     private var watchdogRunnable: Runnable? = null
     private var resyncDebounceRunnable: Runnable? = null
     private var settleRunnable: Runnable? = null
+    private var inactivityResetRunnable: Runnable? = null
 
     // Counting state
     private val reelProgress = ReelProgress()
     private var lastSettledPosition = 0
+    private var furthestPosition = -1
     private var pendingCandidatePosition = 0
     private var lastItemCount = -1
     private val lastPackagePositions = mutableMapOf<String, Int>()
@@ -74,6 +80,7 @@ class ReelAccessibilityService : AccessibilityService() {
                     lastPackagePositions.clear()
                     reelProgress.reset()
                     lastSettledPosition = -1
+                    furthestPosition = -1
                     isAwaitingInitialPosition = true
                     lastItemCount = -1
                     cancelSettleTimer()
@@ -83,16 +90,6 @@ class ReelAccessibilityService : AccessibilityService() {
                     // Resync 800ms after unlock
                     mainHandler.postDelayed({ resync() }, 800)
                 }
-            }
-        }
-    }
-
-    // BroadcastReceiver for Midnight rollover and Time changes
-    private val timeChangeReceiver = object : BroadcastReceiver() {
-        override fun onReceive(context: Context?, intent: Intent?) {
-            countStore.ensureToday()
-            if (currentMode is ServiceMode.REEL && preferences.showCounter.value) {
-                pillManager.updateCount(countStore.todayCount.value)
             }
         }
     }
@@ -135,18 +132,6 @@ class ReelAccessibilityService : AccessibilityService() {
             registerReceiver(screenReceiver, filter, Context.RECEIVER_NOT_EXPORTED)
         } else {
             registerReceiver(screenReceiver, filter)
-        }
-
-        // Register midnight and time change receiver securely
-        val timeFilter = IntentFilter().apply {
-            addAction(Intent.ACTION_DATE_CHANGED)
-            addAction(Intent.ACTION_TIMEZONE_CHANGED)
-            addAction(Intent.ACTION_TIME_CHANGED)
-        }
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            registerReceiver(timeChangeReceiver, timeFilter, Context.RECEIVER_NOT_EXPORTED)
-        } else {
-            registerReceiver(timeChangeReceiver, timeFilter)
         }
     }
 
@@ -216,7 +201,7 @@ class ReelAccessibilityService : AccessibilityService() {
                 }
             }
         } catch (t: Throwable) {
-            t.printStackTrace()
+            if (BuildConfig.DEBUG) Log.w("rotcount", "onAccessibilityEvent error", t)
         }
     }
 
@@ -292,19 +277,21 @@ class ReelAccessibilityService : AccessibilityService() {
         val knownPos = lastPackagePositions[pkg]
         if (knownPos != null && knownPos >= 0) {
             lastSettledPosition = knownPos
+            furthestPosition = knownPos
             pendingCandidatePosition = knownPos
             isAwaitingInitialPosition = false
         } else {
             reelProgress.reset()
             lastSettledPosition = -1
+            furthestPosition = -1
             pendingCandidatePosition = -1
             isAwaitingInitialPosition = true
         }
         lastItemCount = -1
         cancelSettleTimer()
 
-        // 3. Ensure date is current and show pill if "Show counter" is on
-        countStore.ensureToday()
+        // 3. Show pill if "Show counter" is on
+        countStore.ensureCurrentDay()
         if (preferences.showCounter.value) {
             pillManager.showPill(countStore.todayCount.value)
         }
@@ -332,19 +319,13 @@ class ReelAccessibilityService : AccessibilityService() {
         // 2. Hide pill immediately
         pillManager.hidePill()
 
-        // 3. Reset counting progress & baseline
-        reelProgress.reset()
-        lastSettledPosition = -1
-        pendingCandidatePosition = -1
-        isAwaitingInitialPosition = true
-        lastItemCount = -1
-
-        // 4. Cancel timers
+        // 3. Cancel timers
         cancelSaveTimer()
         cancelWatchdog()
         cancelSettleTimer()
+        cancelInactivityTimer()
 
-        // 5. Save pending counts to Room
+        // 4. Save pending counts to Room
         serviceScope.launch(Dispatchers.IO) {
             countStore.savePendingCounts()
         }
@@ -440,6 +421,26 @@ class ReelAccessibilityService : AccessibilityService() {
         watchdogRunnable = null
     }
 
+    private fun startInactivityTimer() {
+        cancelInactivityTimer()
+        val r = Runnable {
+            // After 10 minutes with no candidate event, reset state so next reel starts fresh
+            reelProgress.reset()
+            lastPackagePositions.clear()
+            lastSettledPosition = -1
+            furthestPosition = -1
+            isAwaitingInitialPosition = true
+            lastItemCount = -1
+        }
+        inactivityResetRunnable = r
+        mainHandler.postDelayed(r, 10 * 60 * 1000L) // 10 minutes
+    }
+
+    private fun cancelInactivityTimer() {
+        inactivityResetRunnable?.let { mainHandler.removeCallbacks(it) }
+        inactivityResetRunnable = null
+    }
+
     // -------------------------------------------------------------
     // Counting Logic & Gates
     // -------------------------------------------------------------
@@ -474,36 +475,33 @@ class ReelAccessibilityService : AccessibilityService() {
         val viewIdLower = viewId.lowercase()
         val classNameLower = className.lowercase()
 
-        // Strict Chat/Direct/Comment blocklist: never count scrolls inside DM chats or comment threads
-        val isChatOrNonReel = viewIdLower.contains("direct") ||
+        // Strict Exclusion: Ignore chats, comments, explore, profile, search, notifications
+        val isExcluded = viewIdLower.contains("direct") ||
                 viewIdLower.contains("thread") ||
-                viewIdLower.contains("message") ||
                 viewIdLower.contains("chat") ||
+                viewIdLower.contains("message") ||
                 viewIdLower.contains("inbox") ||
                 viewIdLower.contains("comment") ||
+                viewIdLower.contains("explore") ||
+                viewIdLower.contains("profile") ||
+                viewIdLower.contains("search") ||
+                viewIdLower.contains("notification") ||
+                viewIdLower.contains("newsfeed") ||
                 classNameLower.contains("direct") ||
                 classNameLower.contains("thread") ||
                 classNameLower.contains("chat") ||
                 classNameLower.contains("message") ||
                 classNameLower.contains("comment")
 
-        if (isChatOrNonReel) {
+        if (isExcluded) {
             safeRecycle(sourceNode)
             return
         }
 
-        // Positive reel match required: viewId must contain 'clips' or 'reel',
-        // or class must be the reel-specific pager (ReboundViewPager).
-        // A generic class match alone is NOT enough, completely ignoring Home feed posts.
-        // Instagram view IDs and classes can change across app updates. Counts must fail to zero rather than overcount.
-        val isReelPagerClass = className.contains("ReboundViewPager", ignoreCase = true)
         val matchesViewId = signature.viewIdKeywords.any { viewId.contains(it, ignoreCase = true) }
-        val isPositiveReelMatch = matchesViewId || isReelPagerClass
+        val isPagerClass = signature.pagerClassNames.any { className.contains(it, ignoreCase = true) }
 
-        if (!isPositiveReelMatch) {
-            if (BuildConfig.DEBUG) {
-                Log.d("rotcount_gate", "Rejected scroll: not a reel view (class=$className, viewId=$viewId)")
-            }
+        if (!isPagerClass && !matchesViewId) {
             safeRecycle(sourceNode)
             return
         }
@@ -523,10 +521,11 @@ class ReelAccessibilityService : AccessibilityService() {
             return
         }
 
-        // Gate B1: Media Card Size Check (Reels vs Comments / Chat Rows)
-        // Only Reels are counted (Home feed posts are ignored).
-        // A Reel fills nearly the entire screen (child item >= 35% screen height).
+        // Gate B1: Media Card Size Check (Reels / Feed Posts vs Comments / Chat Rows)
+        // A Reel or Home feed post contains large media cards (>= 35% screen height).
         // A Comment sheet or Chat conversation consists entirely of small items (< 28% screen height).
+        // In Home feed, child 0 may be the Stories tray (~10%), but child 1 or 2 is a feed post (>= 45%).
+        // Inspect up to the first 4 visible children to find the maximum child height.
         if (sourceNode.childCount > 0) {
             var maxChildH = 0
             val checkCount = minOf(sourceNode.childCount, 4)
@@ -541,11 +540,24 @@ class ReelAccessibilityService : AccessibilityService() {
                 }
             }
             if (maxChildH > 0 && (maxChildH.toFloat() / screenHeight.toFloat()) < 0.28f) {
-                // All visible items are small rows (comment items or chat bubbles) - NOT a reel!
+                // All visible items are small rows (comment items or chat bubbles) - NOT a reel or feed post!
                 safeRecycle(sourceNode)
                 return
             }
         }
+
+        // Window-level Comment & Chat Check
+        try {
+            val root = rootInActiveWindow
+            if (root != null) {
+                val isCommentOrChatOpen = hasCommentOrChatIndicators(root)
+                safeRecycle(root)
+                if (isCommentOrChatOpen) {
+                    safeRecycle(sourceNode)
+                    return
+                }
+            }
+        } catch (ignored: Exception) {}
 
         // Gate B2: Strictly Vertical - discard horizontal swipes (e.g. swiping left to profile or DMs)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
@@ -575,6 +587,7 @@ class ReelAccessibilityService : AccessibilityService() {
         if (itemCount in 1 until lastItemCount) {
             reelProgress.reset()
             lastSettledPosition = -1
+            furthestPosition = -1
             isAwaitingInitialPosition = true
         }
         if (itemCount > 0) {
@@ -600,15 +613,18 @@ class ReelAccessibilityService : AccessibilityService() {
                 // User opened reels (which start at index 0) and immediately swiped to index 1!
                 reelProgress.reset()
                 lastSettledPosition = 0
+                furthestPosition = 0
                 pendingCandidatePosition = 1
                 isAwaitingInitialPosition = false
                 lastPackagePositions[mode.packageName] = 1
+                startInactivityTimer()
                 restartSettleTimer()
                 return
             } else {
                 // Set initial baseline
                 reelProgress.reset()
                 lastSettledPosition = pos
+                furthestPosition = pos
                 pendingCandidatePosition = pos
                 isAwaitingInitialPosition = false
                 lastPackagePositions[mode.packageName] = pos
@@ -616,9 +632,9 @@ class ReelAccessibilityService : AccessibilityService() {
             }
         }
 
-        // At index 0 (idle on first reel)
+        // At index 0 (idle on first reel or top of feed)
+        // Keep furthestPosition intact so scrolling back to the top does NOT wipe history
         if (pos == 0) {
-            reelProgress.reset()
             lastSettledPosition = 0
             pendingCandidatePosition = 0
             lastPackagePositions[mode.packageName] = 0
@@ -626,22 +642,27 @@ class ReelAccessibilityService : AccessibilityService() {
             return
         }
 
-        // New reel session opened from Explore / Search / Profile
-        // e.g. was previously at reel 8 in main tab, tapped a new reel in Explore and swiped to 1 or 2
-        if (pos in 1..2 && lastSettledPosition >= 3) {
-            reelProgress.reset()
-            lastSettledPosition = (pos - 1).coerceAtLeast(0)
+        // Backward scroll (re-watching earlier reels/posts)
+        // Must NEVER count backward moves!
+        if (pos < lastSettledPosition) {
+            lastSettledPosition = pos
             pendingCandidatePosition = pos
             lastPackagePositions[mode.packageName] = pos
+            cancelSettleTimer()
+            return
+        }
+
+        // Forward scroll (pos > lastSettledPosition)
+        // Single swipe (pos = lastSettledPosition + 1) or rapid swipe & stop (pos in lastSettledPosition + 1..15)
+        if (pos > lastSettledPosition) {
+            pendingCandidatePosition = pos
+            startInactivityTimer()
             restartSettleTimer()
             return
         }
 
-        // Position change (forward or backward): queue settle timer to route move through ReelProgress
-        if (pos != lastSettledPosition) {
-            pendingCandidatePosition = pos
-            restartSettleTimer()
-        }
+        // Same position (pos == lastSettledPosition)
+        // User is settling on the current post/reel. Do NOT cancel active settle timer.
     }
 
     private fun isKeyboardShowing(): Boolean {
@@ -694,6 +715,7 @@ class ReelAccessibilityService : AccessibilityService() {
         val positionNow = pendingCandidatePosition
         if (lastSettledPosition < 0) {
             lastSettledPosition = positionNow
+            furthestPosition = maxOf(furthestPosition, positionNow)
             lastPackagePositions[mode.packageName] = positionNow
             return
         }
@@ -702,18 +724,11 @@ class ReelAccessibilityService : AccessibilityService() {
         lastSettledPosition = positionNow
         lastPackagePositions[mode.packageName] = positionNow
 
-        if (pages == 0) return
+        if (pages <= 0) return
 
-        if (Math.abs(pages) > 15) {
+        if (pages > 15) {
             // Abnormally large jump (e.g. background view pager restore), align baseline without counting
-            return
-        }
-
-        // Route every settled move (forward AND backward) through reelProgress
-        val added = reelProgress.onSettledMove(pages)
-
-        if (pages <= 0 || added <= 0) {
-            // Backward moves and re-watching earlier reels do not count
+            furthestPosition = maxOf(furthestPosition, positionNow)
             return
         }
 
@@ -721,21 +736,14 @@ class ReelAccessibilityService : AccessibilityService() {
             return
         }
 
-        // CPU/battery optimization: Run heavy comment/chat UI inspection once at settle time
-        try {
-            val root = rootInActiveWindow
-            if (root != null) {
-                val isCommentOrChatOpen = hasCommentOrChatIndicators(root)
-                safeRecycle(root)
-                if (isCommentOrChatOpen) {
-                    return
-                }
-            }
-        } catch (ignored: Exception) {}
-
-        // Forward move reached a new furthest reel (+1)
-        countStore.recordCount(1)
-        pillManager.updateCount(countStore.todayCount.value)
+        // Strict anti-recounting:
+        // Only count if this move reaches a NEW reel beyond the furthest position reached so far!
+        // Re-watching earlier reels (reverting and coming back) does NOT recount!
+        if (positionNow > furthestPosition) {
+            furthestPosition = positionNow
+            countStore.recordCount(1)
+            pillManager.updateCount(countStore.todayCount.value)
+        }
     }
 
     override fun onConfigurationChanged(newConfig: Configuration) {
@@ -759,9 +767,6 @@ class ReelAccessibilityService : AccessibilityService() {
         transitionToIdle()
         try {
             unregisterReceiver(screenReceiver)
-        } catch (ignored: Exception) {}
-        try {
-            unregisterReceiver(timeChangeReceiver)
         } catch (ignored: Exception) {}
         todayCountJob?.cancel()
         prefsCollectorJob?.cancel()

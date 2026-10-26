@@ -27,6 +27,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -92,7 +93,7 @@ fun FirstLaunchScreen(
                 Spacer(modifier = Modifier.height(16.dp))
 
                 Text(
-                    text = "RotCount needs Accessibility access to notice when you move to the next reel. It never reads what is on your screen, and nothing leaves your phone.",
+                    text = stringResource(id = R.string.accessibility_service_description),
                     style = ReelTheme.typography.body,
                     color = ReelTheme.colors.textSecondary
                 )

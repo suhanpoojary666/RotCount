@@ -1,17 +1,8 @@
-import java.io.FileInputStream
-import java.util.Properties
-
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.android)
     alias(libs.plugins.kotlin.compose)
     alias(libs.plugins.ksp)
-}
-
-val keystorePropertiesFile = rootProject.file("keystore.properties")
-val keystoreProperties = Properties()
-if (keystorePropertiesFile.exists()) {
-    FileInputStream(keystorePropertiesFile).use { keystoreProperties.load(it) }
 }
 
 android {
@@ -22,33 +13,28 @@ android {
         applicationId = "com.suhan.reelcounter"
         minSdk = 26
         targetSdk = 35
-        versionCode = 1
-        versionName = "1.0.0"
+        versionCode = 2
+        versionName = "1.0.1"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {
             useSupportLibrary = true
         }
+    }
 
-        ndk {
-            abiFilters.addAll(listOf("arm64-v8a", "armeabi-v7a"))
-        }
+    testOptions {
+        unitTests.isReturnDefaultValues = true
     }
 
     signingConfigs {
         create("release") {
-            if (keystorePropertiesFile.exists()) {
-                val storeFilePath = keystoreProperties.getProperty("storeFile")
-                val storeFileObj = file(storeFilePath)
-                if (!storeFileObj.exists()) {
-                    throw GradleException("Keystore file not found at: $storeFilePath. Please verify keystore.properties.")
-                }
-                storeFile = storeFileObj
-                storePassword = keystoreProperties.getProperty("storePassword")
-                keyAlias = keystoreProperties.getProperty("keyAlias")
-                keyPassword = keystoreProperties.getProperty("keyPassword")
-            } else {
-                throw GradleException("keystore.properties is missing! Release build requires keystore.properties with storeFile, storePassword, keyAlias, and keyPassword.")
+            val ksPath = System.getenv("RC_KEYSTORE_PATH") ?: rootProject.file("rotcount-release.jks").absolutePath
+            val ksFile = file(ksPath)
+            if (ksFile.exists()) {
+                storeFile = ksFile
+                storePassword = System.getenv("RC_KEYSTORE_PASSWORD") ?: "rotcount2026"
+                keyAlias = System.getenv("RC_KEY_ALIAS") ?: "rotcount"
+                keyPassword = System.getenv("RC_KEY_PASSWORD") ?: "rotcount2026"
             }
         }
     }
@@ -56,8 +42,7 @@ android {
     buildTypes {
         release {
             isDebuggable = false
-            isMinifyEnabled = true
-            isShrinkResources = true
+            isMinifyEnabled = false
             signingConfig = signingConfigs.getByName("release")
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
@@ -65,6 +50,7 @@ android {
             )
         }
         debug {
+            isDebuggable = true
             isMinifyEnabled = false
         }
     }
@@ -86,15 +72,6 @@ android {
         compose = true
         buildConfig = true
     }
-
-    applicationVariants.all {
-        if (buildType.name == "release") {
-            outputs.all {
-                val output = this as? com.android.build.gradle.internal.api.BaseVariantOutputImpl
-                output?.outputFileName = "rotcount-v1.0.0.apk"
-            }
-        }
-    }
 }
 
 ksp {
@@ -110,11 +87,11 @@ dependencies {
     implementation(platform(libs.androidx.compose.bom))
     implementation(libs.androidx.compose.ui)
     implementation(libs.androidx.compose.ui.graphics)
+    implementation(libs.androidx.compose.ui.tooling.preview)
     implementation(libs.androidx.compose.foundation)
     implementation(libs.androidx.compose.animation)
     implementation(libs.androidx.compose.material3)
 
-    debugImplementation(libs.androidx.compose.ui.tooling.preview)
     debugImplementation(libs.androidx.compose.ui.tooling)
 
     // Room local database

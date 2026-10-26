@@ -1,8 +1,5 @@
-# Proguard rules for RotCount
+# Proguard rules for Reel Counter
 -keep class com.suhan.reelcounter.data.** { *; }
--keep class com.suhan.reelcounter.logic.** { *; }
--keep class * extends androidx.room.RoomDatabase
--dontwarn androidx.room.paging.**
 
 # Industry-standard release hardening: Strip all debug logging
 -assumenosideeffects class android.util.Log {

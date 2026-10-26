@@ -56,7 +56,6 @@ fun HomeScreen(
 
     val pagerState = rememberPagerState(initialPage = selectedSegment) { 3 }
     val coroutineScope = rememberCoroutineScope()
-    val scrollState = rememberScrollState()
 
     // Sync swipe gestures with ViewModel segment
     LaunchedEffect(pagerState.currentPage) {
@@ -80,11 +79,10 @@ fun HomeScreen(
     ) {
         Column(
             modifier = Modifier
-                .fillMaxWidth()
+                .fillMaxSize()
                 .widthIn(max = 600.dp)
-                .verticalScroll(scrollState)
                 .padding(horizontal = 20.dp)
-                .padding(top = 28.dp, bottom = 48.dp)
+                .padding(top = 28.dp)
         ) {
             // 1. Header: Clean, centered "RotCount" title with settings icon on the right
             Box(
@@ -140,12 +138,21 @@ fun HomeScreen(
             Spacer(modifier = Modifier.height(18.dp))
 
             // 3. Swipeable Horizontal Pager for Day (0), Week (1), and Year (2)
+            // Weight(1f) ensures pager extends all the way to the bottom border of the screen,
+            // so swiping anywhere (including from the bottom) switches smoothly between Day, Week, and Year.
             HorizontalPager(
                 state = pagerState,
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .weight(1f),
                 verticalAlignment = Alignment.Top
             ) { page ->
-                Column(modifier = Modifier.fillMaxWidth()) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .verticalScroll(rememberScrollState())
+                        .padding(bottom = 32.dp)
+                ) {
                     when (page) {
                         0 -> {
                             // Sub-heading: Today

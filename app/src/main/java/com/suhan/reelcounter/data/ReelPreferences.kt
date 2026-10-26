@@ -1,13 +1,17 @@
 package com.suhan.reelcounter.data
 
 import android.content.Context
+import android.util.Log
 import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.preferencesDataStore
+import com.suhan.reelcounter.BuildConfig
+import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -18,7 +22,10 @@ private val Context.dataStore: DataStore<Preferences> by preferencesDataStore(na
 
 class ReelPreferences(private val context: Context) {
 
-    private val scope = CoroutineScope(Dispatchers.IO)
+    private val ioErrors = CoroutineExceptionHandler { _, t ->
+        if (BuildConfig.DEBUG) Log.w("rotcount", "DataStore preferences error", t)
+    }
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO + ioErrors)
 
     private val _showCounter = MutableStateFlow(true)
     val showCounter: StateFlow<Boolean> = _showCounter.asStateFlow()
